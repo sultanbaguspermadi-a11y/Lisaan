@@ -1,0 +1,195 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  STUDENT
+  TEACHER
+  EDITOR
+  ADMIN
+}
+
+enum EntryStatus {
+  DRAFT
+  REVIEW
+  PUBLISHED
+}
+
+enum PartOfSpeech {
+  NOUN
+  VERB
+  ADJECTIVE
+  PHRASE
+}
+
+enum Gender {
+  MASCULINE
+  FEMININE
+}
+
+/// Jurusan. Dinamis: menambah jurusan = menambah baris, bukan mengubah kode.
+model Major {
+  id         String     @id @default(cuid())
+  slug       String     @unique
+  nameId     String
+  nameAr     String
+  nameEn     String
+  accent     String
+  sortOrder  Int        @default(0)
+  categories Category[]
+  users      User[]
+}
+
+model Category {
+  id        String          @id @default(cuid())
+  slug      String          @unique
+  nameId    String
+  nameAr    String
+  nameEn    String
+  accent    String
+  sortOrder Int             @default(0)
+  /// null = kategori umum (tidak terikat jurusan)
+  majorId   String?
+  major     Major?          @relation(fields: [majorId], references: [id], onDelete: SetNull)
+  entries   EntryCategory[]
+
+  @@index([majorId])
+}
+
+model Entry {
+  id           String          @id @default(cuid())
+  slug         String          @unique
+  headword     String
+  /// Bentuk ternormalisasi (tanpa harakat/tatweel, alif/ta marbuta/alif maqsura disamakan).
+  headwordNorm String
+  translit     String
+  translitNorm String
+  pos          PartOfSpeech
+  gender       Gender?
+  root         String?
+  plural       String?
+  /// Bentuk kata kerja: { madhi, mudhari, amr, masdar }
+  forms        Json?
+  usageNote    String?
+  status       EntryStatus     @default(DRAFT)
+  publishedAt  DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  meanings     Meaning[]
+  examples     Example[]
+  categories   EntryCategory[]
+  favorites    Favorite[]
+  cards        SrsCard[]
+
+  @@index([status, updatedAt])
+  @@index([status, id])
+  @@index([headwordNorm], map: "Entry_headwordNorm_idx")
+  @@index([translitNorm], map: "Entry_translitNorm_idx")
+  @@index([headwordNorm(ops: raw("gin_trgm_ops"))], type: Gin, map: "Entry_headwordNorm_trgm_idx")
+  @@index([translitNorm(ops: raw("gin_trgm_ops"))], type: Gin, map: "Entry_translitNorm_trgm_idx")
+}
+
+model Meaning {
+  id        String @id @default(cuid())
+  entryId   String
+  entry     Entry  @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  /// "id" atau "en"
+  lang      String
+  text      String
+  textNorm  String
+  sortOrder Int    @default(0)
+
+  @@index([entryId, lang, sortOrder])
+  @@index([textNorm], map: "Meaning_textNorm_idx")
+  @@index([textNorm(ops: raw("gin_trgm_ops"))], type: Gin, map: "Meaning_textNorm_trgm_idx")
+}
+
+model Example {
+  id          String @id @default(cuid())
+  entryId     String
+  entry       Entry  @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  arabic      String
+  translation String
+  sortOrder   Int    @default(0)
+
+  @@index([entryId])
+}
+
+model EntryCategory {
+  entryId    String
+  categoryId String
+  entry      Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([entryId, categoryId])
+  @@index([categoryId])
+}
+
+model User {
+  id           String          @id @default(cuid())
+  email        String          @unique
+  name         String
+  passwordHash String?
+  role         Role            @default(STUDENT)
+  majorId      String?
+  major        Major?          @relation(fields: [majorId], references: [id], onDelete: SetNull)
+  /// Preferensi tampilan (tema, font Arab, harakat, bahasa, ...)
+  settings     Json?
+  createdAt    DateTime        @default(now())
+  favorites    Favorite[]
+  history      SearchHistory[]
+  cards        SrsCard[]
+
+  @@index([majorId])
+}
+
+model Favorite {
+  userId    String
+  entryId   String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entry     Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@id([userId, entryId])
+  @@index([userId, createdAt])
+}
+
+model SearchHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  query     String
+  queryNorm String
+  at        DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, queryNorm])
+  @@index([userId, at])
+}
+
+/// Pencarian tanpa hasil, untuk bahan analitik konten.
+model SearchMiss {
+  queryNorm String   @id
+  count     Int      @default(1)
+  lastAt    DateTime @default(now())
+}
+
+/// Kartu flashcard berbasis SM-2.
+model SrsCard {
+  userId     String
+  entryId    String
+  ease       Float    @default(2.5)
+  intervalD  Int      @default(0)
+  reps       Int      @default(0)
+  dueAt      DateTime @default(now())
+  lastReview DateTime?
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entry      Entry    @relation(fields: [entryId], references: [id], onDelete: Cascade)
+
+  @@id([userId, entryId])
+  @@index([userId, dueAt])
+}
